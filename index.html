@@ -284,6 +284,37 @@ h1{font-family:var(--display);font-size:clamp(26px,4.4vw,36px);font-weight:600;l
 .qitem .u{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
 .qitem .st{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--amber);background:var(--amber-soft);padding:2px 7px;border-radius:5px;flex:none}
 
+/* servings picker */
+.serves{display:inline-flex;border:1px solid var(--line-2);border-radius:8px;overflow:hidden;background:var(--surface)}
+.serves button{padding:5px 11px;font-size:13px;font-weight:600;color:var(--muted);border-right:1px solid var(--line-2);line-height:1.2}
+.serves button:last-child{border-right:0}
+.serves button:hover{background:var(--surface-2);color:var(--ink)}
+.serves button.on{background:var(--accent);color:var(--on-accent)}
+.serves.sm button{padding:4px 8px;font-size:12px}
+.spec-serves dd{margin-top:1px}
+.scalednote{margin:-4px 0 10px;font-size:12.5px;color:var(--amber);font-style:italic;line-height:1.45}
+
+/* planner sidebar tabs */
+.shoptabs{display:flex;gap:3px;padding:3px;border-radius:9px;background:var(--surface-2);margin-bottom:14px}
+.shoptabs button{flex:1;padding:7px 8px;border-radius:7px;font-size:13px;font-weight:600;color:var(--muted)}
+.shoptabs button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+
+/* prep list */
+.prep{padding:8px 0;border-bottom:1px solid var(--line)}
+.prep:last-child{border-bottom:0}
+.prep-top{display:flex;align-items:baseline;gap:8px}
+.prep-q{font-size:13px;font-weight:700;color:var(--accent-ink);font-variant-numeric:tabular-nums;white-space:nowrap;
+  background:var(--accent-soft);padding:2px 7px;border-radius:6px;flex:none}
+.prep-n{font-size:14px;font-weight:600;flex:1;min-width:0}
+.prep-x{font-size:13px;font-weight:700;color:var(--amber);flex:none}
+.prep-why{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.4}
+
+/* "fits the same shop" */
+.addpill{font-size:11px;font-weight:700;padding:3px 7px;border-radius:6px;flex:none;
+  background:var(--surface-2);color:var(--muted);font-variant-numeric:tabular-nums}
+.addpill.good{background:var(--accent-soft);color:var(--accent-ink)}
+.addpill.ok{background:var(--amber-soft);color:var(--amber)}
+
 .syncdot{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);padding:4px 9px;border-radius:7px;background:var(--surface-2);white-space:nowrap;cursor:default}
 .syncdot.ok>span:first-child{color:var(--accent)}
 .syncdot.warn>span:first-child{color:var(--amber)}
@@ -309,7 +340,7 @@ h1{font-family:var(--display);font-size:clamp(26px,4.4vw,36px);font-weight:600;l
 @media print{
   @page{margin:14mm}
   .top,.botnav,.footnote,.railtoggle,.rail,.searchbar,.resbar,.card-actions,.detail-bar,.back,
-  .day-acts,.cand input,.legend,.scrim,.toast,.formbar,.cook-top{display:none!important}
+  .day-acts,.cand input,.legend,.scrim,.toast,.formbar,.cook-top,.shoptabs,.serves{display:none!important}
   body{background:#fff;color:#000;font-size:11pt}
   .wrap{padding:0;max-width:none}
   .cols,.plan-grid,.hero{display:block}
@@ -400,7 +431,10 @@ let S = {
   view:"library", openId:null, editing:false, creating:false,
   q:"", tags:new Set(), ings:new Set(), filtersOpen:false,
   ingDraft:"", suggOpen:false, suggIdx:-1,
+  shopTab:"shop",       // which list the planner sidebar is showing
+  nearbyOpen:false,     // "fits the same shop" suggestions
   candidates:[],        // recipe ids in the planner pool
+  servings:{},          // recipe id -> how many people you're cooking for
   week:{},              // day -> recipeId
   preview:new Set(),    // candidate ids being previewed against the list
   overrides:{},         // id -> partial recipe (user edits)
@@ -444,11 +478,29 @@ function matches(r){
   return true;
 }
 
+/* ---------- servings ---------- */
+const SERVING_CHOICES = [2,4,6,8];
+/* What the recipe was written for, and what you've set it to. */
+const baseServes  = r => r.servings || 2;
+const servesNow   = r => S.servings[r.id] || baseServes(r);
+const scaleOf     = r => servesNow(r) / baseServes(r);
+const tidy        = n => Math.abs(n - Math.round(n)) < 0.02 ? Math.round(n) : +n.toFixed(2);
+/* Ingredients at the amount you're actually cooking. */
+function ingsOf(r){
+  const k = scaleOf(r);
+  return (r.ingredients||[]).map(i => k===1 ? i : {...i, qty: tidy(i.qty * k)});
+}
+function servingPicker(r, small){
+  return `<span class="serves ${small?"sm":""}" role="group" aria-label="Servings for ${esc(r.title)}">` +
+    SERVING_CHOICES.map(n=>`<button data-act="setserv" data-id="${r.id}" data-n="${n}"${n===servesNow(r)?' class="on" aria-pressed="true"':' aria-pressed="false"'}>${n}</button>`).join("") +
+    `</span>`;
+}
+
 /* ---------- shopping ---------- */
 function tally(ids){
   const m=new Map();
   ids.forEach(id=>{ const r=byId(id); if(!r) return;
-    (r.ingredients||[]).forEach(i=>{
+    ingsOf(r).forEach(i=>{
       const k=i.canonical||i.name.toLowerCase();
       if(!m.has(k)) m.set(k,{canonical:k,unit:i.unit,qty:0,meals:0});
       const e=m.get(k); if(e.unit===i.unit) e.qty+=i.qty; e.meals++; });
@@ -468,9 +520,44 @@ function shoppingRows(){
   rows.sort((a,b)=> b.meals-a.meals || a.canonical.localeCompare(b.canonical));
   return rows;
 }
+/* Everything the shopping list is currently covering. */
+function plannedIds(){ return [...Object.values(S.week).filter(Boolean), ...S.preview]; }
+
+/* ---------- prep list ----------
+   The shopping list totals raw ingredients. This is the other half of the job:
+   each portion you actually measure out, and how many times you measure it. */
+function prepRows(){
+  const m=new Map();
+  plannedIds().forEach(id=>{ const r=byId(id); if(!r) return;
+    ingsOf(r).forEach(i=>{
+      const name=(i.name||"").trim();
+      const key=`${i.qty}|${i.unit}|${name.toLowerCase()}`;
+      if(!m.has(key)) m.set(key,{qty:i.qty,unit:i.unit,name,canonical:i.canonical,n:0,meals:[]});
+      const e=m.get(key); e.n++; if(!e.meals.includes(r.title)) e.meals.push(r.title);
+    });
+  });
+  return [...m.values()].sort((a,b)=> a.name.localeCompare(b.name) || a.qty-b.qty);
+}
+
+/* ---------- recipes that fit the shop you're already doing ----------
+   Scored by how many ingredients they'd ADD, not by how many they share, so
+   the list gets better as the planner fills up. */
+function nearbyRecipes(limit){
+  const have=new Set();
+  plannedIds().forEach(id=>{ const r=byId(id); if(r) (r.ingredients||[]).forEach(i=>have.add(i.canonical||i.name.toLowerCase())); });
+  if(!have.size) return [];
+  const rows=allRecipes().filter(r=>!inPlanner(r.id) && (r.ingredients||[]).length).map(r=>{
+    const cs=new Set((r.ingredients||[]).map(i=>i.canonical||i.name.toLowerCase()));
+    let shared=0; cs.forEach(c=>{ if(have.has(c)) shared++; });
+    return { r, shared, add: cs.size-shared };
+  });
+  rows.sort((a,b)=> a.add-b.add || b.shared-a.shared || a.r.title.localeCompare(b.r.title));
+  return rows.slice(0, limit||10);
+}
+
 function staples(){
   const m=new Map();
-  [...Object.values(S.week).filter(Boolean), ...S.preview].forEach(id=>{
+  plannedIds().forEach(id=>{
     const r=byId(id); if(!r) return; (r.pantry||[]).forEach(s=>m.set(s,(m.get(s)||0)+1)); });
   return [...m.entries()].sort((a,b)=>b[1]-a[1]);
 }
@@ -581,7 +668,7 @@ function viewDetail(){
       <p class="sub">${esc(r.subtitle)}</p>
       <dl class="specs">
         <div class="spec"><dt>Time</dt><dd>${fmtTime(r)} min</dd></div>
-        <div class="spec"><dt>Serves</dt><dd>${r.servings}</dd></div>
+        <div class="spec spec-serves"><dt>Serves</dt><dd>${servingPicker(r)}</dd></div>
         <div class="spec"><dt>Difficulty</dt><dd>${esc(r.difficulty)}</dd></div>
         <div class="spec"><dt>Spice</dt><dd>${esc(r.spice)}</dd></div>
         <div class="spec"><dt>Rating</dt><dd>${r.rating?stars(r.rating):"—"}</dd></div>
@@ -593,6 +680,7 @@ function viewDetail(){
         <button class="btn primary" data-act="cook" data-id="${r.id}">Open cooking view</button>
         <button class="btn ${planned?"on":""}" data-act="toggleplan" data-id="${r.id}">${d?`✓ Planned ${d}`:planned?"✓ In planner":"Add to planner"}</button>
         <button class="btn" data-act="edit" data-id="${r.id}">Edit recipe</button>
+        <button class="btn" data-act="pdf" data-id="${r.id}">Download PDF</button>
         <button class="btn" data-act="print" data-what="recipe">Print</button>
         <button class="btn danger" data-act="del" data-id="${r.id}">Delete</button>
       </div>
@@ -601,14 +689,15 @@ function viewDetail(){
   <div class="cols">
     <aside>
       <div class="panel"><h2>Ingredients</h2>
-        <ul class="ilist">${(r.ingredients||[]).map(i=>
+        ${servesNow(r)!==baseServes(r)?`<p class="scalednote">Scaled to ${servesNow(r)} from the ${baseServes(r)} this recipe was written for.</p>`:""}
+        <ul class="ilist">${ingsOf(r).map(i=>
           `<li><span>${esc(i.name)}</span><span class="q">${fmtQty(i.qty,i.unit,nounOf(i.canonical))}</span></li>`).join("")}</ul>
         ${r.pantry?.length?`<div class="pantry-note"><b>From your pantry:</b> ${r.pantry.map(esc).join(", ")}</div>`:""}
         ${r.equipment?.length?`<div class="pantry-note"><b>Equipment:</b> ${r.equipment.map(esc).join(", ")}</div>`:""}
       </div>
       ${r.proteinOptions?.length?`<div class="panel"><h2>Customize It</h2>
         <ul class="ilist">${r.proteinOptions.map(i=>
-          `<li><span>${esc(i.name)}</span><span class="q">${fmtQty(i.qty,i.unit)}</span></li>`).join("")}</ul></div>`:""}
+          `<li><span>${esc(i.name)}</span><span class="q">${fmtQty(tidy(i.qty*scaleOf(r)),i.unit)}</span></li>`).join("")}</ul></div>`:""}
       <div class="panel"><h2>Your notes</h2>
         <textarea id="noteBox" style="width:100%;min-height:82px;padding:11px;border-radius:9px;border:1px solid var(--line-2);background:var(--ground);font:inherit;font-size:14px;resize:vertical;color:var(--ink)" placeholder="What you changed, what to do differently…">${esc(r.notes||"")}</textarea>
       </div>
@@ -768,8 +857,9 @@ function viewWeek(){
         if(!r) return `<div class="day free"><div class="dayname">${day}</div><div class="day-body"><span style="font-size:13px;color:var(--muted)">Open</span></div></div>`;
         return `<div class="day"><div class="dayname">${day}</div><div class="day-body">
           <div class="day-thumb">${thumbHTML(r)}</div>
-          <div class="day-t">${esc(r.title)}<span>${fmtTime(r)} min · Serves ${r.servings}</span></div>
+          <div class="day-t">${esc(r.title)}<span>${fmtTime(r)} min</span></div>
           <div class="day-acts">
+            ${servingPicker(r,true)}
             <select class="daysel" data-act="moveday" data-id="${r.id}">
               ${DAYS.map(dd=>`<option value="${dd}" ${dd===day?"selected":""}>${dd}</option>`).join("")}
               <option value="">→ Shortlist</option>
@@ -787,8 +877,9 @@ function viewWeek(){
         return `<div class="cand ${on?"previewing":""}">
           <input type="checkbox" data-act="preview" data-id="${id}" ${on?"checked":""} aria-label="Preview ${esc(r.title)} in shopping list">
           <div class="day-thumb">${thumbHTML(r)}</div>
-          <div class="day-t">${esc(r.title)}<span>${fmtTime(r)} min · Serves ${r.servings}</span></div>
+          <div class="day-t">${esc(r.title)}<span>${fmtTime(r)} min</span></div>
           <div class="day-acts">
+            ${servingPicker(r,true)}
             <select class="daysel" data-act="assign" data-id="${id}">
               <option value="">Assign day…</option>
               ${DAYS.map(d=>`<option value="${d}">${d}${S.week[d]?" (replace)":""}</option>`).join("")}
@@ -797,20 +888,62 @@ function viewWeek(){
             <button class="mini x" data-act="removeall" data-id="${id}">×</button>
           </div></div>`;
       }).join(""):`<div class="empty" style="padding:26px">Shortlist is empty.</div>`}
+      ${nearbySection()}
     </section>
 
     <aside class="shop">
-      <h2>Shopping list</h2>
-      <p class="lede">Every ingredient across the week, summed.</p>
-      <div class="legend">
-        <span><i style="background:var(--accent)"></i>In the week</span>
-        <span><i style="background:var(--red)"></i>Added by shortlist preview</span>
+      <div class="shoptabs">
+        <button data-act="shoptab" data-v="shop"${S.shopTab!=="prep"?' class="on"':''}>Shopping list</button>
+        <button data-act="shoptab" data-v="prep"${S.shopTab==="prep"?' class="on"':''}>Prep list</button>
       </div>
-      ${rows.length?rows.map(shopRow).join(""):`<div style="font-size:13px;color:var(--muted)">Assign a day or tick a shortlist item to build the list.</div>`}
-      ${staples().length?`<div class="sgroup"><h4>Pantry staples — check before you buy</h4>
-        <div class="staples">${staples().map(([s,n])=>`${esc(s)}${n>1?` <span style="opacity:.6">×${n}</span>`:""}`).join(" · ")}</div></div>`:""}
+      ${S.shopTab==="prep"?prepPanel():shopPanel(rows)}
     </aside>
   </div>`}`;
+}
+function shopPanel(rows){
+  return `
+  <p class="lede">What to buy — every ingredient across the week, added up.</p>
+  <div class="legend">
+    <span><i style="background:var(--accent)"></i>In the week</span>
+    <span><i style="background:var(--red)"></i>Added by shortlist preview</span>
+  </div>
+  ${rows.length?rows.map(shopRow).join(""):`<div style="font-size:13px;color:var(--muted)">Assign a day or tick a shortlist item to build the list.</div>`}
+  ${staples().length?`<div class="sgroup"><h4>Pantry staples — check before you buy</h4>
+    <div class="staples">${staples().map(([s,n])=>`${esc(s)}${n>1?` <span style="opacity:.6">×${n}</span>`:""}`).join(" · ")}</div></div>`:""}`;
+}
+function prepPanel(){
+  const rows=prepRows();
+  if(!rows.length) return `<p class="lede">What to portion out, once the shopping is home.</p>
+    <div style="font-size:13px;color:var(--muted)">Assign a day or tick a shortlist item to build the list.</div>`;
+  return `
+  <p class="lede">What to portion out — each measurement you'll make, and how many times you'll make it.</p>
+  ${rows.map(e=>`<div class="prep">
+    <div class="prep-top">
+      <span class="prep-q">${fmtQty(e.qty,e.unit,nounOf(e.canonical))}</span>
+      <span class="prep-n">${esc(e.name)}</span>
+      ${e.n>1?`<span class="prep-x">\u00d7${e.n}</span>`:""}
+    </div>
+    <div class="prep-why">${e.meals.map(esc).join(" \u00b7 ")}</div>
+  </div>`).join("")}`;
+}
+function nearbySection(){
+  const rows=nearbyRecipes(40);
+  if(!rows.length) return "";
+  const shown=S.nearbyOpen?rows:rows.slice(0,6);
+  return `
+  <h3 class="secttl" style="margin-top:26px">
+    <i class="dotm" style="background:var(--accent-ink)"></i>Fits the same shop
+  </h3>
+  <p class="lede" style="margin:-4px 0 12px">Ranked by how few new ingredients each one adds to the list you already have.</p>
+  ${shown.map(({r,shared,add})=>`<div class="cand">
+    <div class="day-thumb">${thumbHTML(r)}</div>
+    <div class="day-t">${esc(r.title)}<span>${add===0?"adds nothing new":`adds ${add} new`} \u00b7 shares ${shared} \u00b7 ${fmtTime(r)} min</span></div>
+    <div class="day-acts">
+      <span class="addpill ${add<=2?"good":add<=5?"ok":""}">+${add}</span>
+      <button class="mini" data-act="open" data-id="${r.id}">View</button>
+      <button class="mini" data-act="toggleplan" data-id="${r.id}">Add</button>
+    </div></div>`).join("")}
+  ${rows.length>6?`<button class="linkbtn" data-act="nearbymore">${S.nearbyOpen?"Show fewer":`Show all ${rows.length}`}</button>`:""}`;
 }
 function shopRow(e){
   const noun=nounOf(e.canonical);
@@ -835,11 +968,11 @@ function renderCook(){
     <div class="cook-top">
       <button class="btn" data-act="cookclose">← Close</button>
       <h2>${esc(r.title)}</h2>
-      <span style="font-size:13px;color:var(--muted);white-space:nowrap">Serves ${r.servings}</span>
+      <span style="font-size:13px;color:var(--muted);white-space:nowrap">Serves ${servesNow(r)}</span>
     </div>
     <div class="cook-ing"><h3>Ingredients · tap to check off</h3>
       <ul class="cklist">
-        ${(r.ingredients||[]).map((i,ix)=>`<li><label><input type="checkbox" data-ck="i${ix}" ${S.cook.checked.has("i"+ix)?"checked":""}><span>${esc(i.name)} <span style="color:var(--muted)">· ${fmtQty(i.qty,i.unit,nounOf(i.canonical))}</span></span></label></li>`).join("")}
+        ${ingsOf(r).map((i,ix)=>`<li><label><input type="checkbox" data-ck="i${ix}" ${S.cook.checked.has("i"+ix)?"checked":""}><span>${esc(i.name)} <span style="color:var(--muted)">· ${fmtQty(i.qty,i.unit,nounOf(i.canonical))}</span></span></label></li>`).join("")}
         ${(r.pantry||[]).map((p,ix)=>`<li><label><input type="checkbox" data-ck="p${ix}" ${S.cook.checked.has("p"+ix)?"checked":""}><span>${esc(p)} <span style="color:var(--muted)">· pantry</span></span></label></li>`).join("")}
       </ul>
     </div>
@@ -901,6 +1034,13 @@ document.addEventListener("click", e=>{
       else S.candidates.push(id);
       save(); render(); break;
     case "removeall": commit(id,null); S.candidates=S.candidates.filter(x=>x!==id); save(); render(); break;
+    case "setserv": {
+      const n=+t.dataset.n, r=byId(id); if(!r) break;
+      if(n===baseServes(r)) delete S.servings[id]; else S.servings[id]=n;
+      save(); render(); break; }
+    case "shoptab": S.shopTab=t.dataset.v; render(); break;
+    case "nearbymore": S.nearbyOpen=!S.nearbyOpen; render(); break;
+    case "pdf": recipePDF(byId(id)); break;
     case "clearweek": ask("Clear the planner?","This empties both the week and the shortlist. Your recipes are untouched.",
       "Clear it", ()=>{ S.week={}; S.candidates=[]; S.preview.clear(); save(); render(); toast("Planner cleared"); }, true); break;
 
@@ -981,6 +1121,140 @@ document.addEventListener("keydown", e=>{
     if(e.key==="Escape"){ S.suggOpen=false; render(); }
   }
 });
+
+/* ---------- PDF ----------
+   Built on demand: the library is only fetched the first time you ask for one. */
+let jspdfReady = null;
+function loadJsPDF(){
+  if(window.jspdf?.jsPDF) return Promise.resolve();
+  if(jspdfReady) return jspdfReady;
+  jspdfReady = new Promise((res,rej)=>{
+    const el=document.createElement("script");
+    el.src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    el.onload=res; el.onerror=()=>rej(new Error("couldn't load the PDF library"));
+    document.head.appendChild(el);
+  });
+  return jspdfReady;
+}
+function loadImg(src){
+  return new Promise(res=>{ if(!src) return res(null);
+    const i=new Image(); i.onload=()=>res(i); i.onerror=()=>res(null); i.src=src; });
+}
+
+async function recipePDF(r){
+  if(!r) return;
+  toast("Building the PDF…");
+  try{ await loadJsPDF(); }
+  catch(e){ tell("Couldn't build the PDF", "The PDF library didn't load. Check your connection and try again — or use Print and choose “Save as PDF”."); return; }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:"pt", format:"letter" });
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
+  const M = 52, RIGHT = W - M;
+  let y = M;
+
+  const ink="#171A15", soft="#6A7165", line="#D2D7C8", accent="#3F6B4A";
+  const page = () => { doc.addPage(); y = M; };
+  const room = h => { if(y + h > H - M - 22) page(); };
+
+  function wrapped(text, size, font, style, colour, lead, indent){
+    doc.setFont(font, style); doc.setFontSize(size); doc.setTextColor(colour);
+    const lines = doc.splitTextToSize(String(text), RIGHT - M - (indent||0));
+    for(const ln of lines){ room(lead); doc.text(ln, M + (indent||0), y); y += lead; }
+  }
+
+  /* header */
+  doc.setFont("times","bold"); doc.setFontSize(23); doc.setTextColor(ink);
+  for(const ln of doc.splitTextToSize(r.title || "Recipe", RIGHT - M)){ room(27); doc.text(ln, M, y); y += 27; }
+  if(r.subtitle){ y += 2; wrapped(r.subtitle, 13, "times", "italic", soft, 17); }
+  y += 8;
+
+  const meta = [ `${fmtTime(r)} min`, `Serves ${servesNow(r)}`, r.difficulty, r.spice ]
+    .filter(Boolean).join("   ·   ");
+  doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(soft);
+  doc.text(meta.toUpperCase(), M, y); y += 14;
+  doc.setDrawColor(line); doc.setLineWidth(0.8); doc.line(M, y, RIGHT, y); y += 20;
+
+  /* photo */
+  const img = await loadImg(PHOTOS[r.id]);
+  if(img){
+    const w = RIGHT - M, h = Math.min(w * (img.naturalHeight/img.naturalWidth), 250);
+    room(h + 16);
+    try{ doc.addImage(img, "JPEG", M, y, w, h, undefined, "FAST"); y += h + 20; }catch(e){}
+  }
+
+  /* ingredients */
+  doc.setFont("times","bold"); doc.setFontSize(14); doc.setTextColor(ink);
+  room(22); doc.text("Ingredients", M, y); y += 17;
+  if(servesNow(r) !== baseServes(r)){
+    wrapped(`Scaled to ${servesNow(r)} from the ${baseServes(r)} this recipe was written for.`,
+            9, "helvetica", "italic", soft, 13);
+    y += 3;
+  }
+  doc.setFontSize(10.5);
+  for(const i of ingsOf(r)){
+    room(15);
+    doc.setFont("helvetica","bold"); doc.setTextColor(accent);
+    const q = fmtQty(i.qty, i.unit, nounOf(i.canonical));
+    doc.text(q, M, y);
+    doc.setFont("helvetica","normal"); doc.setTextColor(ink);
+    const qw = doc.getTextWidth(q);
+    const nm = doc.splitTextToSize(i.name, RIGHT - M - qw - 12);
+    doc.text(nm[0], M + qw + 10, y); y += 14;
+    for(let k=1;k<nm.length;k++){ room(13); doc.text(nm[k], M + qw + 10, y); y += 13; }
+  }
+  y += 6;
+  if(r.pantry?.length){ wrapped("From your pantry: " + r.pantry.join(", "), 9.5, "helvetica", "italic", soft, 13); }
+  if(r.equipment?.length){ wrapped("Equipment: " + r.equipment.join(", "), 9.5, "helvetica", "italic", soft, 13); }
+  y += 12;
+
+  /* before you cook */
+  if(r.beforeYouCook?.length){
+    doc.setFont("times","bold"); doc.setFontSize(14); doc.setTextColor(ink);
+    room(20); doc.text("Before you cook", M, y); y += 16;
+    for(const b of r.beforeYouCook){
+      room(14); doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(soft);
+      doc.text("•", M, y);
+      const ls = doc.splitTextToSize(b, RIGHT - M - 14);
+      doc.text(ls[0], M + 12, y); y += 13;
+      for(let k=1;k<ls.length;k++){ room(13); doc.text(ls[k], M + 12, y); y += 13; }
+    }
+    y += 12;
+  }
+
+  /* steps */
+  doc.setFont("times","bold"); doc.setFontSize(14); doc.setTextColor(ink);
+  room(20); doc.text("Method", M, y); y += 18;
+  for(const st of (r.steps||[])){
+    room(34);
+    doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(accent);
+    doc.text(String(st.n), M, y);
+    doc.setFont("times","bold"); doc.setFontSize(12); doc.setTextColor(ink);
+    const ts = doc.splitTextToSize(st.title || "", RIGHT - M - 22);
+    doc.text(ts[0], M + 18, y); y += 15;
+    for(let k=1;k<ts.length;k++){ room(15); doc.text(ts[k], M + 18, y); y += 15; }
+    doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(ink);
+    for(const b of (st.bullets||[])){
+      const ls = doc.splitTextToSize(b, RIGHT - M - 30);
+      for(const ln of ls){ room(14); doc.text(ln, M + 18, y); y += 14; }
+      y += 3;
+    }
+    y += 9;
+  }
+
+  /* footer on every page */
+  const n = doc.internal.getNumberOfPages();
+  for(let i=1;i<=n;i++){
+    doc.setPage(i);
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(soft);
+    doc.text(r.source ? `${r.title} · ${r.source}` : r.title, M, H - 28);
+    doc.text(`${i} of ${n}`, RIGHT, H - 28, { align:"right" });
+  }
+
+  const name = (r.title||"recipe").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+  doc.save(`${name}.pdf`);
+  toast("PDF saved");
+}
 
 function saveDraft(){
   const d=S.draft;
@@ -1112,13 +1386,14 @@ async function cacheAllPhotos(){
 
 /* ---------- state ---------- */
 const snapshot = () => ({ candidates:S.candidates, week:S.week, queue:S.queue,
-                          overrides:S.overrides, custom:S.custom, v:4 });
+                          overrides:S.overrides, custom:S.custom, servings:S.servings, v:4 });
 function applyState(d){ if(!d) return;
   if(d.candidates) S.candidates = d.candidates;
   if(d.week)       S.week = d.week;
   if(d.queue)      S.queue = d.queue;
   if(d.overrides)  S.overrides = d.overrides;
-  if(d.custom)     S.custom = d.custom; }
+  if(d.custom)     S.custom = d.custom;
+  if(d.servings)   S.servings = d.servings; }
 function localSave(){ try{ localStorage.setItem(LS, JSON.stringify(snapshot())); }catch(e){} }
 function localLoad(){ try{ return JSON.parse(localStorage.getItem(LS) || "null"); }catch(e){ return null; } }
 
